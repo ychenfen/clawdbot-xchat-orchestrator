@@ -1,0 +1,16 @@
+{
+  "name": "clawdbot-xchat-orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Multi-bot Telegram group chat orchestrator for ClawDBot gateways (DeepSeek <-> GLM <-> Jarvis).",
+  "scripts": {
+    "lint": "node -c src/orchestrator.mjs",
+    "start": "node src/orchestrator.mjs"
+  },
+  "dependencies": {
+    "clawdbot": "^2026.1.24"
+  }
+}
+
