@@ -7,7 +7,8 @@
   "description": "Multi-bot Telegram group chat orchestrator for OpenClaw gateways (DeepSeek <-> GLM <-> Jarvis).",
   "scripts": {
     "lint": "node -c src/orchestrator.mjs",
-    "start": "node src/orchestrator.mjs"
+    "start": "node src/orchestrator.mjs",
+    "health:local": "bash scripts/health-check.sh"
   },
   "dependencies": {
     "clawdbot": "^2026.1.24"

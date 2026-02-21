@@ -59,6 +59,8 @@ Telegram Bot API 一般不会把机器人消息再投递给其他机器人，所
 2. `docs/ARCHITECTURE.md`: 架构说明
 3. `launchd/com.openclaw.xchat.orchestrator.plist.example`: launchd 示例
 4. `scripts/install-launchd.sh`: 一键安装 launchd
+5. `scripts/health-check.sh`: 本地健康检查
+6. `docs/WATCH_OPTION_A_QUICKSTART.md`: 手表方案A（iPhone 节点）实操
 
 ## 6. 环境依赖
 
@@ -91,6 +93,12 @@ npm run start
 
 ```bash
 ./scripts/install-launchd.sh
+```
+
+4. 本地健康检查
+
+```bash
+npm run health:local
 ```
 
 ## 8. 配置加载规则
@@ -195,3 +203,15 @@ npm run start
 1. 增加健康检查脚本（配置合法性 + 端口连通 + launchd 状态）
 2. 增加回归测试（指令匹配、session 发现、限流行为）
 3. 把“稳定化 checklist”抽成单独 runbook 并在 CI 中跑基础静态校验
+
+## 15. 手表（方案A）入口
+
+已提供可执行版文档：
+
+`docs/WATCH_OPTION_A_QUICKSTART.md`
+
+建议按该文档跑最短链路：
+
+1. `openclaw nodes pending --json`
+2. `openclaw nodes approve <request-id>`
+3. `openclaw nodes push --node <node-id-or-name> --title "Pair OK" --body "Watch route check"`
