@@ -12,7 +12,7 @@ Use a local orchestrator process that:
 
 1. Tails the OpenClaw session transcript (`.jsonl`) for a Telegram group
 2. Detects user messages and control commands
-3. Calls multiple local ClawDBot gateways (`agent` method) in a fixed sequence
+3. Calls multiple local OpenClaw gateways (`agent` method) in a fixed sequence
 4. Injects previous outputs into the next prompt (bridge memory)
 5. Delivers each model's response back to the same Telegram group
 
@@ -44,11 +44,10 @@ When exchange mode is enabled, the orchestrator patches the DeepSeek/GLM session
 
 - `groupActivation: "mention"`
 
-In ClawDBot Telegram implementation, group activation influences whether the bot requires mention. This is used as a guardrail to prevent DeepSeek/GLM from responding directly to every group message while the orchestrator is already driving turns.
+In OpenClaw (legacy Clawdbot) Telegram implementation, group activation influences whether the bot requires mention. This is used as a guardrail to prevent DeepSeek/GLM from responding directly to every group message while the orchestrator is already driving turns.
 
 ## Limitations
 
 - Not a real Telegram bot-to-bot message feed.
 - The "mutual visibility" is entirely prompt-based.
 - If your group is extremely chatty, rate limiting and cooldown may skip triggers.
-

@@ -6,7 +6,33 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { GatewayClient } from 'clawdbot/dist/gateway/client.js';
+async function loadGatewayClient() {
+  const candidates = [
+    process.env.XCHAT_GATEWAY_CLIENT_PATH,
+    'openclaw/dist/gateway/client.js',
+    'clawdbot/dist/gateway/client.js',
+    '/opt/homebrew/lib/node_modules/openclaw/dist/gateway/client.js',
+    '/opt/homebrew/lib/node_modules/clawdbot/dist/gateway/client.js',
+    '/usr/local/lib/node_modules/openclaw/dist/gateway/client.js',
+    '/usr/local/lib/node_modules/clawdbot/dist/gateway/client.js',
+  ].filter(Boolean);
+
+  const failures = [];
+  for (const id of candidates) {
+    try {
+      const mod = await import(id);
+      if (typeof mod?.GatewayClient === 'function') return mod.GatewayClient;
+    } catch (err) {
+      failures.push(`${id}: ${err?.message ?? String(err)}`);
+    }
+  }
+
+  throw new Error(
+    `Unable to load GatewayClient. Tried ${candidates.length} candidates.\n${failures.join('\n')}`,
+  );
+}
+
+const GatewayClient = await loadGatewayClient();
 
 const HOME = process.env.HOME || os.homedir();
 
@@ -29,13 +55,13 @@ const SESSION_STORE_PATH = process.env.OPENCLAW_SESSION_STORE_PATH
 
 const OPENCLAW_CONFIG_PATH = process.env.OPENCLAW_CONFIG_PATH
   ? path.resolve(process.env.OPENCLAW_CONFIG_PATH)
-  : path.join(OPENCLAW_DIR, 'openclaw.json');
+  : resolveConfigPath(OPENCLAW_DIR);
 const DEEPSEEK_CONFIG_PATH = process.env.DEEPSEEK_CONFIG_PATH
   ? path.resolve(process.env.DEEPSEEK_CONFIG_PATH)
-  : path.join(DEEPSEEK_DIR, 'clawdbot.json');
+  : resolveConfigPath(DEEPSEEK_DIR);
 const GLM_CONFIG_PATH = process.env.GLM_CONFIG_PATH
   ? path.resolve(process.env.GLM_CONFIG_PATH)
-  : path.join(GLM_DIR, 'clawdbot.json');
+  : resolveConfigPath(GLM_DIR);
 
 const DEFAULTS = {
   cooldownMs: 8_000,
@@ -61,6 +87,12 @@ function safeReadJson(p) {
 
 function ensureDir(p) {
   fs.mkdirSync(p, { recursive: true });
+}
+
+function resolveConfigPath(dir, preferredName = 'openclaw.json', legacyName = 'clawdbot.json') {
+  const preferred = path.join(dir, preferredName);
+  if (fs.existsSync(preferred)) return preferred;
+  return path.join(dir, legacyName);
 }
 
 function loadState() {
@@ -120,6 +152,9 @@ function isControlCommand(text) {
 function matchModeCommand(text) {
   const t = text.trim();
   if (!t) return null;
+  // Tolerate leading @mentions and trailing punctuation in group messages.
+  const stripped = t.replace(/^@[a-zA-Z0-9_]{3,}\s+/, '').trim();
+  const plain = stripped.replace(/[。！？!?，,；;：:\s]+$/g, '').trim();
 
   const on = ['开启交流模式', '打开交流模式', '交流模式开', '/xchat on', '/xchat 开', '/xchat 开启'];
   const onTrio = [
@@ -136,15 +171,15 @@ function matchModeCommand(text) {
   const kickoff = ['开场互聊', '交流开场', '/xchat kickoff', '/xchat 开场'];
   const kickoffTrio = ['开场三方互聊', '三方交流开场', '/xchat kickoff3', '/xchat 三方开场'];
 
-  if (onTrio.includes(t)) return { kind: 'on', mode: 'trio' };
-  if (on.includes(t)) return { kind: 'on', mode: 'duo' };
-  if (off.includes(t)) return { kind: 'off' };
-  if (status.includes(t)) return { kind: 'status' };
-  if (kickoffTrio.includes(t)) return { kind: 'kickoff', mode: 'trio' };
-  if (kickoff.includes(t)) return { kind: 'kickoff' };
+  if (onTrio.includes(plain)) return { kind: 'on', mode: 'trio' };
+  if (on.includes(plain)) return { kind: 'on', mode: 'duo' };
+  if (off.includes(plain)) return { kind: 'off' };
+  if (status.includes(plain) || plain.includes('交流模式状态')) return { kind: 'status' };
+  if (kickoffTrio.includes(plain)) return { kind: 'kickoff', mode: 'trio' };
+  if (kickoff.includes(plain)) return { kind: 'kickoff' };
 
   // Allow a simple "交流轮数 2".
-  const m = t.match(/^交流轮数\s+(\d+)$/);
+  const m = plain.match(/^交流轮数(?:\s*[:：]?\s*)(\d+)$/);
   if (m) {
     const n = Number(m[1]);
     if (Number.isFinite(n) && n >= 1 && n <= 3) return { kind: 'rounds', rounds: n };
@@ -182,15 +217,18 @@ function loadGatewayToken(configPath) {
 
 async function waitReady(client, label) {
   const deadline = Date.now() + 10_000;
+  let lastError = null;
   while (Date.now() < deadline) {
     try {
       await client.request('status', {}, { expectFinal: true });
       return;
-    } catch {
+    } catch (err) {
+      lastError = err;
       await delay(250);
     }
   }
-  throw new Error(`${label} gateway not ready after 10s`);
+  const detail = lastError ? `: ${String(lastError)}` : '';
+  throw new Error(`${label} gateway not ready after 10s${detail}`);
 }
 
 async function sendTelegram(client, to, message) {
@@ -252,8 +290,14 @@ function listTelegramGroupSessions() {
 
   for (const [key, value] of entries) {
     if (!key.includes(':telegram:group:')) continue;
-    const sessionFile = value?.sessionFile;
-    if (!sessionFile || typeof sessionFile !== 'string') continue;
+    const parts = key.split(':');
+    const agentId = parts[1] || OPENCLAW_AGENT_ID;
+    const sessionId = typeof value?.sessionId === 'string' ? value.sessionId : '';
+    let sessionFile = typeof value?.sessionFile === 'string' ? value.sessionFile : '';
+    if (!sessionFile && sessionId) {
+      sessionFile = path.join(OPENCLAW_DIR, 'agents', agentId, 'sessions', `${sessionId}.jsonl`);
+    }
+    if (!sessionFile || !fs.existsSync(sessionFile)) continue;
     const chatId = key.split(':').at(-1);
     if (!chatId) continue;
     groups.push({ chatId, sessionKey: key, sessionFile });
@@ -331,9 +375,20 @@ async function main() {
 
   const openclawToken = loadGatewayToken(OPENCLAW_CONFIG_PATH);
 
-  const openclaw = new GatewayClient({ url: openclawUrl, token: openclawToken });
-  const deepseek = new GatewayClient({ url: deepseekUrl });
-  const glm = new GatewayClient({ url: glmUrl });
+  const openclaw = new GatewayClient({
+    url: openclawUrl,
+    token: openclawToken,
+    scopes: ['operator.read', 'operator.admin', 'operator.approvals', 'operator.pairing'],
+    onConnectError: (err) => log(`openclaw connect error: ${String(err)}`),
+  });
+  const deepseek = new GatewayClient({
+    url: deepseekUrl,
+    onConnectError: (err) => log(`deepseek connect error: ${String(err)}`),
+  });
+  const glm = new GatewayClient({
+    url: glmUrl,
+    onConnectError: (err) => log(`glm connect error: ${String(err)}`),
+  });
 
   openclaw.start();
   deepseek.start();
@@ -381,6 +436,12 @@ async function main() {
     glm: '@yuchenxu_glm_bot',
   };
 
+  const stripTelegramMentions = (text) =>
+    normalizeText(text)
+      .replace(/(^|\s)@[a-zA-Z0-9_]{3,}/g, '$1')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
   const KICKOFF_DUO_USER_TEXT = [
     '交流模式开场：你们两位先互相认识（各用一句话：模型/定位/擅长）。',
     '然后选一个协作主题开始讨论，最后给用户一个可执行的下一步。',
@@ -424,7 +485,7 @@ async function main() {
         message: dsPrompt,
       });
 
-      chatState.bridge.lastDeepseek = normalizeText(ds.text);
+      chatState.bridge.lastDeepseek = stripTelegramMentions(ds.text);
 
       const glmPrompt = [
         `你是 GLM bot，在“交流模式”下接力 DeepSeek。`,
@@ -447,7 +508,7 @@ async function main() {
         message: glmPrompt,
       });
 
-      chatState.bridge.lastGlm = normalizeText(g.text);
+      chatState.bridge.lastGlm = stripTelegramMentions(g.text);
       last = chatState.bridge.lastGlm;
       saveState(state);
     }
@@ -485,7 +546,7 @@ async function main() {
         replyTo: to,
         message: dsPrompt,
       });
-      chatState.bridge.lastDeepseek = normalizeText(ds.text);
+      chatState.bridge.lastDeepseek = stripTelegramMentions(ds.text);
 
       const glmPrompt = [
         `你是 GLM bot，在“三方交流模式”下接力 DeepSeek。`,
@@ -505,7 +566,7 @@ async function main() {
         replyTo: to,
         message: glmPrompt,
       });
-      chatState.bridge.lastGlm = normalizeText(g.text);
+      chatState.bridge.lastGlm = stripTelegramMentions(g.text);
 
       const ocPrompt = [
         `你是 Jarvis（OpenClaw 主机器人），在“三方交流模式”下接力 GLM。`,
@@ -525,7 +586,7 @@ async function main() {
         replyTo: to,
         message: ocPrompt,
       });
-      chatState.bridge.lastOpenclaw = normalizeText(oc.text);
+      chatState.bridge.lastOpenclaw = stripTelegramMentions(oc.text);
       last = chatState.bridge.lastOpenclaw || chatState.bridge.lastGlm;
 
       saveState(state);
